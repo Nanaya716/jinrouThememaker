@@ -1,28 +1,20 @@
-# TrainDiscount-Web
+# Coffee 主题文件生成器
 
-This template should help get you started developing with Vue 3 in Vite.
+用于编辑、导入和导出 Coffee 主题文件。编辑内容会自动保存至浏览器本地存储，再次打开页面时自动恢复。
 
-## Recommended IDE Setup
-
-[VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
+## 安装依赖
 
 ```sh
 npm install
 ```
 
-### Compile and Hot-Reload for Development
+## 本地运行
 
 ```sh
 npm run dev
 ```
 
-### Compile and Minify for Production
+## 构建
 
 ```sh
 npm run build

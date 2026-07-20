@@ -28,7 +28,7 @@
             <span v-if="config.name && config.name.trim().length > 0 && config.name.trim().length < 2" class="error-msg">主题名称至少需要2个字符</span>
           </div>
           <div class="form-item">
-            <label>开场语</label>
+            <label>开场语（基本无用）</label>
             <input v-model="config.opening" type="text" placeholder="例如: 一大波僵尸正在接近!" />
           </div>
           <div class="form-item">
@@ -61,10 +61,8 @@
             </div>
             <div class="card-body">
               <div class="form-item">
-                <label>ID (英文) *</label>
-                <input v-model="char.id" type="text" placeholder="例: Nikaido_hiro2  英文开头 可随便写一个，不重复"
-                  :class="{ 'input-error': char.id && !isValidId(char.id) }" />
-                <span v-if="char.id && !isValidId(char.id)" class="error-msg">ID必须以英文字母开头，只能包含英文字母、数字和下划线</span>
+                <label>自动生成 ID</label>
+                <span class="generated-id">{{ char.id }}</span>
               </div>
               <div class="form-item">
                 <label>显示名称 *</label>
@@ -129,43 +127,10 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
-// 生成唯一ID
-let nextId = 1;
-const generateId = () => nextId++;
-
-// 导入错误
-const importError = ref('');
-const fileInput = ref(null);
-
-// 验证提示展开状态
-const showValidation = ref(false);
-
-// 重置所有数据
-const resetAll = () => {
-  config.value = {
-    name: '',
-    opening: '',
-    author: '',
-    skin_tip: '你的身份',
-    color: '#ff00a6',
-    background_color: '#000000',
-    icon: '',
-    vote: '',
-    sunrise: '',
-    sunset: '',
-    lockable: true
-  };
-  characters.value = [];
-  importError.value = '';
-  if (fileInput.value) {
-    fileInput.value.value = '';
-  }
-};
-
-// 主题基本配置
-const config = ref({
+const STORAGE_KEY = 'coffee-theme-maker-draft';
+const createDefaultConfig = () => ({
   name: '',
   opening: '',
   author: '',
@@ -179,13 +144,78 @@ const config = ref({
   lockable: true
 });
 
+let nextCharacterNumber = 1;
+let nextInternalId = 1;
+let skipNextDraftSave = false;
+const generateInternalId = () => nextInternalId++;
+const generateCharacterId = () => `character_${nextCharacterNumber++}`;
+
+// 导入错误
+const importError = ref('');
+const fileInput = ref(null);
+
+// 验证提示展开状态
+const showValidation = ref(false);
+
+// 重置所有数据
+const resetAll = () => {
+  config.value = createDefaultConfig();
+  characters.value = [];
+  nextCharacterNumber = 1;
+  importError.value = '';
+  skipNextDraftSave = true;
+  localStorage.removeItem(STORAGE_KEY);
+  if (fileInput.value) {
+    fileInput.value.value = '';
+  }
+};
+
+// 主题基本配置
+const config = ref(createDefaultConfig());
+
 // 角色列表
 const characters = ref([]);
 
-// ID 验证：英文开头，只能包含英文字母、数字和下划线
-const isValidId = (id) => {
-  return /^[a-zA-Z][a-zA-Z0-9_]*$/.test(id);
+const updateNextCharacterNumber = () => {
+  const largestNumber = characters.value.reduce((largest, char) => {
+    const match = /^character_(\d+)$/.exec(char.id);
+    return match ? Math.max(largest, Number(match[1])) : largest;
+  }, 0);
+  nextCharacterNumber = largestNumber + 1;
 };
+
+const saveDraft = () => {
+  if (skipNextDraftSave) {
+    skipNextDraftSave = false;
+    return;
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ config: config.value, characters: characters.value }));
+};
+
+const restoreDraft = () => {
+  const draft = localStorage.getItem(STORAGE_KEY);
+  if (!draft) return;
+
+  try {
+    const saved = JSON.parse(draft);
+    config.value = { ...createDefaultConfig(), ...saved.config };
+    characters.value = Array.isArray(saved.characters)
+      ? saved.characters.map(char => ({
+        _id: generateInternalId(),
+        id: char.id || generateCharacterId(),
+        name: char.name || '',
+        prizeInput: char.prizeInput || '',
+        avatarInput: char.avatarInput || ''
+      }))
+      : [];
+    updateNextCharacterNumber();
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+};
+
+onMounted(restoreDraft);
+watch([config, characters], saveDraft, { deep: true });
 
 // 获取头像数组（从输入文本解析）
 const getAvatars = (char) => {
@@ -208,8 +238,8 @@ const getPrizes = (char) => {
 // 添加新角色
 const addCharacter = () => {
   characters.value.push({
-    _id: generateId(),
-    id: '',
+    _id: generateInternalId(),
+    id: generateCharacterId(),
     name: '',
     prizeInput: '',
     avatarInput: ''
@@ -251,11 +281,6 @@ const validationErrors = computed(() => {
     errors.push('至少需要添加一个角色');
   }
   characters.value.forEach((char, index) => {
-    if (!char.id || char.id.trim().length === 0) {
-      errors.push(`角色 #${index + 1} 的 ID 不能为空`);
-    } else if (!isValidId(char.id)) {
-      errors.push(`角色 #${index + 1} 的 ID 格式不正确（必须以英文字母开头，只能包含英文字母、数字和下划线）`);
-    }
     if (!char.name || char.name.trim().length === 0) {
       errors.push(`角色 #${index + 1} 的显示名称不能为空`);
     }
@@ -322,7 +347,7 @@ const parseCoffeeFile = (content) => {
           if (!idMatch) return;
 
           const char = {
-            _id: generateId(),
+            _id: generateInternalId(),
             id: idMatch[1],
             name: '',
             prizeInput: '',
@@ -380,6 +405,7 @@ const handleFileImport = (event) => {
     if (parsed) {
       config.value = parsed.config;
       characters.value = parsed.characters;
+      updateNextCharacterNumber();
       importError.value = '';
     } else {
       importError.value = '文件解析失败，请确保是正确的 .coffee 格式';
@@ -397,13 +423,9 @@ const generatedCoffee = computed(() => {
 
   let coffee = `module.exports=\n`;
   coffee += `    name:"${config.value.name}"\n`;
-  coffee += `    #\n`;
   coffee += `    opening:"${config.value.opening}"\n`;
-  coffee += `    # to let players know woh they are\n`;
   coffee += `    skin_tip:"${config.value.skin_tip}"\n`;
-  coffee += `    # 主题的作者\n`;
   coffee += `    author:"${config.value.author}"\n`;
-  coffee += `    # 修改时间\n`;
   coffee += `    lastModified:"${now}"\n`;
   coffee += `    vote:"${config.value.vote}"\n`;
   coffee += `    sunrise:"${config.value.sunrise}"\n`;
@@ -413,19 +435,13 @@ const generatedCoffee = computed(() => {
   coffee += `    color:"${config.value.color}"\n`;
   coffee += `    lockable:${config.value.lockable}\n`;
   coffee += `    isAvailable:->
-        # 如果想要做成有某种限制条件
-        # return false
         return true
     skins:\n`;
-  coffee += `        # 罗马字名 ，只允许半角英数字和下划线，数字和下划线不允许是首位
-        # 不可以重复\n`;
 
   characters.value.forEach(char => {
     const avatars = getAvatars(char);
     const prizes = getPrizes(char);
     coffee += `        ${char.id}:\n`;
-    coffee += `            # 头像链接 和 称号 可以是字符串数组，也可以是字符串\n`;
-    coffee += `            # 头像在显示的时候 会压缩为48*48，所以最好纵横比是1:1\n`;
 
     if (avatars.length === 1) {
       coffee += `            avatar:"${avatars[0]}"\n`;
@@ -547,6 +563,17 @@ const downloadCoffee = () => {
 .form-item textarea {
   resize: vertical;
   font-family: inherit;
+}
+
+.generated-id {
+  min-height: 37px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #f8f9fa;
+  color: #666;
+  font-family: monospace;
 }
 
 .input-error {
