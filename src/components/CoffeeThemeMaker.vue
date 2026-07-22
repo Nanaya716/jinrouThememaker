@@ -136,6 +136,30 @@
         </div>
       </section>
     </div>
+
+    <div v-if="cropDialog.visible" class="crop-modal" @click.self="!cropDialog.processing && cancelCrop()">
+      <div class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="crop-dialog-title">
+        <div class="crop-dialog-header">
+          <h3 id="crop-dialog-title">裁剪头像</h3>
+          <button class="btn-close" type="button" aria-label="关闭" :disabled="cropDialog.processing" @click="cancelCrop">×</button>
+        </div>
+        <div ref="cropStage" class="crop-stage">
+          <img ref="cropImage" :src="cropDialog.sourceUrl" alt="待裁剪图片" draggable="false" @load="initializeCrop" />
+          <div v-if="cropDialog.ready" class="crop-selection" :style="cropSelectionStyle" @pointerdown.prevent="!cropDialog.processing && startCropDrag($event)"></div>
+        </div>
+        <label class="crop-size-control">
+          裁剪范围
+          <input v-model.number="cropDialog.sizeRatio" type="range" min="0.2" max="1" step="0.01" :disabled="cropDialog.processing" @input="updateCropSize" />
+        </label>
+        <div class="crop-actions">
+          <button class="btn btn-secondary" type="button" :disabled="cropDialog.processing" @click="cancelCrop">取消</button>
+          <button class="btn btn-success" type="button" :disabled="!cropDialog.ready || cropDialog.processing" @click="confirmCrop">
+            {{ cropDialog.processing ? cropDialog.statusText : '裁剪并上传' }}
+          </button>
+        </div>
+        <div v-if="cropDialog.processing" class="crop-loading"><span class="spinner"></span>{{ cropDialog.statusText }}</div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -239,6 +263,24 @@ watch([config, characters], saveDraft, { deep: true });
 const avatarUploadInputs = new Map();
 const uploadingCharacterId = ref(null);
 const uploadMessage = ref({ characterId: null, text: '', isError: false });
+const cropImage = ref(null);
+const cropDialog = ref({
+  visible: false,
+  ready: false,
+  sourceUrl: '',
+  file: null,
+  characterId: null,
+  x: 0,
+  y: 0,
+  size: 0,
+  sizeRatio: 1,
+  naturalWidth: 0,
+  naturalHeight: 0,
+  displayScale: 1,
+  processing: false,
+  statusText: ''
+});
+let cropDragStart = null;
 
 const setAvatarUploadInput = (characterId, element) => {
   if (element) {
@@ -304,10 +346,113 @@ const uploadAvatar = async (characterIndex, event) => {
     return;
   }
 
+  cropDialog.value = {
+    visible: true,
+    ready: false,
+    sourceUrl: URL.createObjectURL(file),
+    file,
+    characterId: char._id,
+    x: 0,
+    y: 0,
+    size: 0,
+    sizeRatio: 1,
+    naturalWidth: 0,
+    naturalHeight: 0,
+    displayScale: 1,
+    processing: false,
+    statusText: ''
+  };
+};
+
+const initializeCrop = () => {
+  const image = cropImage.value;
+  if (!image) return;
+  const maxSize = Math.min(image.naturalWidth, image.naturalHeight);
+  cropDialog.value.naturalWidth = image.naturalWidth;
+  cropDialog.value.naturalHeight = image.naturalHeight;
+  cropDialog.value.size = maxSize;
+  cropDialog.value.x = (image.naturalWidth - maxSize) / 2;
+  cropDialog.value.y = (image.naturalHeight - maxSize) / 2;
+  cropDialog.value.displayScale = image.clientWidth / image.naturalWidth;
+  cropDialog.value.ready = true;
+};
+
+const updateCropSize = () => {
+  const dialog = cropDialog.value;
+  const maxSize = Math.min(dialog.naturalWidth, dialog.naturalHeight);
+  const newSize = maxSize * dialog.sizeRatio;
+  dialog.x = Math.max(0, Math.min(dialog.x + (dialog.size - newSize) / 2, dialog.naturalWidth - newSize));
+  dialog.y = Math.max(0, Math.min(dialog.y + (dialog.size - newSize) / 2, dialog.naturalHeight - newSize));
+  dialog.size = newSize;
+};
+
+const cropSelectionStyle = computed(() => {
+  const dialog = cropDialog.value;
+  const scale = dialog.displayScale;
+  return {
+    left: `${dialog.x * scale}px`,
+    top: `${dialog.y * scale}px`,
+    width: `${dialog.size * scale}px`,
+    height: `${dialog.size * scale}px`
+  };
+});
+
+const startCropDrag = event => {
+  const dialog = cropDialog.value;
+  cropDragStart = { clientX: event.clientX, clientY: event.clientY, x: dialog.x, y: dialog.y };
+  window.addEventListener('pointermove', moveCropDrag);
+  window.addEventListener('pointerup', stopCropDrag, { once: true });
+};
+
+const moveCropDrag = event => {
+  if (!cropDragStart) return;
+  const dialog = cropDialog.value;
+  dialog.x = Math.max(0, Math.min(cropDragStart.x + (event.clientX - cropDragStart.clientX) / dialog.displayScale, dialog.naturalWidth - dialog.size));
+  dialog.y = Math.max(0, Math.min(cropDragStart.y + (event.clientY - cropDragStart.clientY) / dialog.displayScale, dialog.naturalHeight - dialog.size));
+};
+
+const stopCropDrag = () => {
+  cropDragStart = null;
+  window.removeEventListener('pointermove', moveCropDrag);
+};
+
+const cancelCrop = () => {
+  stopCropDrag();
+  if (cropDialog.value.sourceUrl) URL.revokeObjectURL(cropDialog.value.sourceUrl);
+  cropDialog.value.visible = false;
+};
+
+const createCroppedImage = () => {
+  const dialog = cropDialog.value;
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext('2d');
+  context.drawImage(cropImage.value, dialog.x, dialog.y, dialog.size, dialog.size, 0, 0, 512, 512);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (blob) resolve(new File([blob], `${dialog.file.name.replace(/\.[^.]+$/, '')}.png`, { type: 'image/png' }));
+      else reject(new Error('裁剪图片失败'));
+    }, 'image/png');
+  });
+};
+
+const confirmCrop = async () => {
+  const dialog = cropDialog.value;
+  const char = characters.value.find(item => item._id === dialog.characterId);
+  if (!char) {
+    cancelCrop();
+    return;
+  }
+
   uploadingCharacterId.value = char._id;
+  dialog.processing = true;
+  dialog.statusText = '正在生成 PNG...';
   uploadMessage.value = { characterId: char._id, text: '', isError: false };
   try {
-    const url = await getPostimagesDirectUrl(file);
+    const croppedFile = await createCroppedImage();
+    dialog.statusText = '正在上传图片...';
+    const url = await getPostimagesDirectUrl(croppedFile);
     char.avatarInput = [char.avatarInput.trim(), url].filter(Boolean).join('\n');
     uploadMessage.value = { characterId: char._id, text: '上传成功，已添加到头像链接', isError: false };
   } catch (error) {
@@ -315,6 +460,7 @@ const uploadAvatar = async (characterIndex, event) => {
     uploadMessage.value = { characterId: char._id, text: detail, isError: true };
   } finally {
     uploadingCharacterId.value = null;
+    cancelCrop();
   }
 };
 
@@ -709,6 +855,117 @@ const downloadCoffee = () => {
 .btn-upload {
   padding: 7px 12px;
   font-size: 12px;
+}
+
+.crop-modal {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.crop-dialog {
+  width: min(100%, 560px);
+  padding: 20px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.crop-dialog-header,
+.crop-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.crop-dialog-header h3 {
+  margin: 0;
+  color: #333;
+}
+
+.btn-close {
+  border: none;
+  background: none;
+  color: #666;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.crop-stage {
+  position: relative;
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  justify-content: center;
+  margin: 16px auto;
+  overflow: hidden;
+  background: #222;
+}
+
+.crop-stage img {
+  display: block;
+  max-width: 100%;
+  max-height: 55vh;
+  user-select: none;
+}
+
+.crop-selection {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+  cursor: move;
+  touch-action: none;
+}
+
+.crop-size-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #555;
+  font-size: 14px;
+}
+
+.crop-size-control input {
+  flex: 1;
+}
+
+.crop-actions {
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.crop-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 10px;
+  color: #555;
+  font-size: 14px;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 2px solid #c8d2dc;
+  border-top-color: #007bff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .empty-state {
