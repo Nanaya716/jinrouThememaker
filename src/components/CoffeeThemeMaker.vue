@@ -160,6 +160,22 @@
         <div v-if="cropDialog.processing" class="crop-loading"><span class="spinner"></span>{{ cropDialog.statusText }}</div>
       </div>
     </div>
+
+    <details class="image-host-fallback">
+      <summary>备用图床设置</summary>
+      <label>
+        Postimages API Key
+        <input v-model="imageHostFallbackApiKey" type="password" autocomplete="off" placeholder="留空时使用内置 Key" />
+      </label>
+    </details>
+
+    <div v-if="errorDialog.visible" class="error-modal" @click.self="closeErrorDialog">
+      <div class="error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-dialog-title">
+        <h3 id="error-dialog-title">上传失败</h3>
+        <p>{{ errorDialog.message }}</p>
+        <button class="btn btn-primary" type="button" @click="closeErrorDialog">知道了</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -183,6 +199,7 @@ const createDefaultConfig = () => ({
 
 const POSTIMAGES_API_KEY = 'b3969a2f93b5206ba2e7e0b26c851742';
 const POSTIMAGES_GALLERY = 'default';
+const IMAGE_HOST_FALLBACK_API_KEY_STORAGE_KEY = 'coffee-theme-maker-postimages-api-key';
 
 let nextCharacterNumber = 1;
 let nextInternalId = 1;
@@ -212,6 +229,7 @@ const resetAll = () => {
 
 // 主题基本配置
 const config = ref(createDefaultConfig());
+const imageHostFallbackApiKey = ref(localStorage.getItem(IMAGE_HOST_FALLBACK_API_KEY_STORAGE_KEY) || '');
 
 // 角色列表
 const characters = ref([]);
@@ -259,10 +277,18 @@ const restoreDraft = () => {
 
 onMounted(restoreDraft);
 watch([config, characters], saveDraft, { deep: true });
+watch(imageHostFallbackApiKey, value => {
+  if (value.trim()) {
+    localStorage.setItem(IMAGE_HOST_FALLBACK_API_KEY_STORAGE_KEY, value.trim());
+  } else {
+    localStorage.removeItem(IMAGE_HOST_FALLBACK_API_KEY_STORAGE_KEY);
+  }
+});
 
 const avatarUploadInputs = new Map();
 const uploadingCharacterId = ref(null);
 const uploadMessage = ref({ characterId: null, text: '', isError: false });
+const errorDialog = ref({ visible: false, message: '' });
 const cropImage = ref(null);
 const cropDialog = ref({
   visible: false,
@@ -305,7 +331,7 @@ const getPostimagesDirectUrl = async (file) => {
   const extension = file.name.includes('.') ? file.name.split('.').pop() : '';
   const name = file.name.replace(/\.[^.]+$/, '');
   const form = new URLSearchParams({
-    key: POSTIMAGES_API_KEY,
+    key: imageHostFallbackApiKey.value.trim() || POSTIMAGES_API_KEY,
     gallery: POSTIMAGES_GALLERY,
     o: '2b819584285c102318568238c7d4a4c7',
     m: '59c2ad4b46b0c1e12d5703302bff0120',
@@ -322,7 +348,10 @@ const getPostimagesDirectUrl = async (file) => {
   });
   const uploadResponseBody = await uploadResponse.text();
   console.log('[Postimages] 上传接口返回：', uploadResponseBody);
-  if (!uploadResponse.ok) throw new Error(`上传失败（${uploadResponse.status}）`);
+  const uploadError = uploadResponseBody.match(/<error>([\s\S]*?)<\/error>/)?.[1].trim();
+  if (!uploadResponse.ok || uploadError) {
+    throw new Error(uploadError || `上传失败（${uploadResponse.status}）`);
+  }
   const page = uploadResponseBody.match(/<page>(https:\/\/postimg\.cc\/\w*)<\/page>/)?.[1];
   if (!page) throw new Error('上传成功但未获取到图片页面地址');
 
@@ -334,6 +363,10 @@ const getPostimagesDirectUrl = async (file) => {
   const directUrl = pageResponseBody.match(/https:\/\/i\.postimg\.cc\/\w{8}\/[^"'\s]+\?dl=1/)?.[0];
   if (!directUrl) throw new Error('未能从图片页面解析直链');
   return directUrl;
+};
+
+const closeErrorDialog = () => {
+  errorDialog.value.visible = false;
 };
 
 const uploadAvatar = async (characterIndex, event) => {
@@ -458,6 +491,7 @@ const confirmCrop = async () => {
   } catch (error) {
     const detail = error instanceof TypeError ? '网络请求被浏览器拦截，请检查图床是否允许跨域访问' : error.message;
     uploadMessage.value = { characterId: char._id, text: detail, isError: true };
+    errorDialog.value = { visible: true, message: detail };
   } finally {
     uploadingCharacterId.value = null;
     cancelCrop();
@@ -866,6 +900,78 @@ const downloadCoffee = () => {
   justify-content: center;
   padding: 20px;
   background: rgba(0, 0, 0, 0.6);
+}
+
+.image-host-fallback {
+  position: fixed;
+  right: 12px;
+  bottom: 10px;
+  z-index: 5;
+  max-width: calc(100vw - 24px);
+  color: #777;
+  font-size: 12px;
+}
+
+.image-host-fallback summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.image-host-fallback label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 250px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.image-host-fallback input {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.error-modal {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.error-dialog {
+  width: min(100%, 420px);
+  padding: 20px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+.error-dialog h3 {
+  margin: 0;
+  color: #b42318;
+  font-size: 18px;
+}
+
+.error-dialog p {
+  margin: 12px 0 18px;
+  color: #444;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.error-dialog .btn {
+  display: block;
+  margin-left: auto;
 }
 
 .crop-dialog {
