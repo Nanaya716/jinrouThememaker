@@ -79,6 +79,19 @@
                 <label>头像链接</label>
                 <textarea v-model="char.avatarInput" rows="2"
                   placeholder="每行一个链接，支持多个头像（选填）"></textarea>
+                <div class="upload-row">
+                  <input
+                    :ref="element => setAvatarUploadInput(char._id, element)"
+                    type="file"
+                    accept="image/*"
+                    class="avatar-upload-input"
+                    @change="event => uploadAvatar(index, event)"
+                  />
+                  <button class="btn btn-primary btn-upload" type="button" :disabled="uploadingCharacterId === char._id" @click="openAvatarPicker(char._id)">
+                    {{ uploadingCharacterId === char._id ? '上传中...' : '上传图片' }}
+                  </button>
+                  <span v-if="uploadMessage.characterId === char._id" :class="uploadMessage.isError ? 'error-msg' : 'success-msg'">{{ uploadMessage.text }}</span>
+                </div>
               </div>
 
               <!-- 图片预览 -->
@@ -144,6 +157,9 @@ const createDefaultConfig = () => ({
   lockable: true
 });
 
+const POSTIMAGES_API_KEY = 'b3969a2f93b5206ba2e7e0b26c851742';
+const POSTIMAGES_GALLERY = 'default';
+
 let nextCharacterNumber = 1;
 let nextInternalId = 1;
 let skipNextDraftSave = false;
@@ -189,7 +205,10 @@ const saveDraft = () => {
     skipNextDraftSave = false;
     return;
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ config: config.value, characters: characters.value }));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    config: config.value,
+    characters: characters.value
+  }));
 };
 
 const restoreDraft = () => {
@@ -216,6 +235,88 @@ const restoreDraft = () => {
 
 onMounted(restoreDraft);
 watch([config, characters], saveDraft, { deep: true });
+
+const avatarUploadInputs = new Map();
+const uploadingCharacterId = ref(null);
+const uploadMessage = ref({ characterId: null, text: '', isError: false });
+
+const setAvatarUploadInput = (characterId, element) => {
+  if (element) {
+    avatarUploadInputs.set(characterId, element);
+  } else {
+    avatarUploadInputs.delete(characterId);
+  }
+};
+
+const openAvatarPicker = (characterId) => {
+  avatarUploadInputs.get(characterId)?.click();
+};
+
+const readImageAsBase64 = file => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).split(',')[1]);
+  reader.onerror = () => reject(new Error('图片读取失败'));
+  reader.readAsDataURL(file);
+});
+
+const getPostimagesDirectUrl = async (file) => {
+  const extension = file.name.includes('.') ? file.name.split('.').pop() : '';
+  const name = file.name.replace(/\.[^.]+$/, '');
+  const form = new URLSearchParams({
+    key: POSTIMAGES_API_KEY,
+    gallery: POSTIMAGES_GALLERY,
+    o: '2b819584285c102318568238c7d4a4c7',
+    m: '59c2ad4b46b0c1e12d5703302bff0120',
+    version: '1.0.1',
+    portable: '1',
+    name,
+    type: extension,
+    image: await readImageAsBase64(file)
+  });
+  const uploadResponse = await fetch('/postimages-api/1/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+    body: form
+  });
+  const uploadResponseBody = await uploadResponse.text();
+  console.log('[Postimages] 上传接口返回：', uploadResponseBody);
+  if (!uploadResponse.ok) throw new Error(`上传失败（${uploadResponse.status}）`);
+  const page = uploadResponseBody.match(/<page>(https:\/\/postimg\.cc\/\w*)<\/page>/)?.[1];
+  if (!page) throw new Error('上传成功但未获取到图片页面地址');
+
+  const pageId = new URL(page).pathname.replace(/^\//, '');
+  const pageResponse = await fetch(`/postimages-page/${pageId}`);
+  const pageResponseBody = await pageResponse.text();
+  console.log('[Postimages] 图片页面返回：', pageResponseBody);
+  if (!pageResponse.ok) throw new Error(`获取图片链接失败（${pageResponse.status}）`);
+  const directUrl = pageResponseBody.match(/https:\/\/i\.postimg\.cc\/\w{8}\/[^"'\s]+\?dl=1/)?.[0];
+  if (!directUrl) throw new Error('未能从图片页面解析直链');
+  return directUrl;
+};
+
+const uploadAvatar = async (characterIndex, event) => {
+  const file = event.target.files?.[0];
+  const char = characters.value[characterIndex];
+  event.target.value = '';
+  if (!file || !char) return;
+  if (!file.type.startsWith('image/')) {
+    uploadMessage.value = { characterId: char._id, text: '请选择图片文件', isError: true };
+    return;
+  }
+
+  uploadingCharacterId.value = char._id;
+  uploadMessage.value = { characterId: char._id, text: '', isError: false };
+  try {
+    const url = await getPostimagesDirectUrl(file);
+    char.avatarInput = [char.avatarInput.trim(), url].filter(Boolean).join('\n');
+    uploadMessage.value = { characterId: char._id, text: '上传成功，已添加到头像链接', isError: false };
+  } catch (error) {
+    const detail = error instanceof TypeError ? '网络请求被浏览器拦截，请检查图床是否允许跨域访问' : error.message;
+    uploadMessage.value = { characterId: char._id, text: detail, isError: true };
+  } finally {
+    uploadingCharacterId.value = null;
+  }
+};
 
 // 获取头像数组（从输入文本解析）
 const getAvatars = (char) => {
@@ -585,6 +686,29 @@ const downloadCoffee = () => {
   font-size: 12px;
   color: #dc3545;
   margin-top: 4px;
+}
+
+.success-msg {
+  font-size: 12px;
+  color: #198754;
+  margin-top: 4px;
+}
+
+.upload-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.avatar-upload-input {
+  display: none;
+}
+
+.btn-upload {
+  padding: 7px 12px;
+  font-size: 12px;
 }
 
 .empty-state {
