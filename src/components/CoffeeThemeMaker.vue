@@ -617,7 +617,8 @@ const parseCoffeeFile = (content) => {
     if (lockableMatch) result.config.lockable = lockableMatch[1] === 'true';
 
     // 解析 skins 部分
-    const skinsMatch = content.match(/skins:\s*([\s\S]+)/);
+    // 只跳过 skins: 所在行的空白和换行，保留首个角色前的缩进。
+    const skinsMatch = content.match(/skins:[^\S\r\n]*\r?\n([\s\S]+)/);
     if (skinsMatch) {
       const skinsContent = skinsMatch[1];
       // 匹配每个 skin 块 - 按照顶格的ID后跟冒号来分割
