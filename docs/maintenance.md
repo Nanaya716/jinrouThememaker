@@ -102,6 +102,8 @@ GitHub 的 SSH 验证成功会输出 `Hi ...`，但该命令本身返回码通�
 git remote set-url --push origin git@github.com:Nanaya716/jinrou.git
 ```
 
+本次部署将服务器已有公钥注册为 `jinrou` 仓库的可写 Deploy key，名称是 `jinrou-thememaker@8.137.83.4`。它只获得该仓库的权限，没有把本机 GitHub 登录凭据复制到服务器。可在 [GitHub 仓库 Deploy keys](https://github.com/Nanaya716/jinrou/settings/keys) 查看或撤销；撤销后在线保存仍会本地提交，但 push 将失败。GitHub 主机公钥由官方 `https://api.github.com/meta` 核对后加入服务器 known_hosts，仍保持严格主机验证。
+
 如果是远程分支有新提交（non-fast-forward），先停编辑器并核对本地未推送提交，再处理：
 
 ```bash
