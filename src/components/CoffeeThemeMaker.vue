@@ -27,7 +27,7 @@
           </div>
         </div>
         <div class="server-controls">
-          <button class="btn btn-success" :disabled="!canDownload || !serverFilename || saving || loading || cropDialog.visible" @click="saveServerTheme">
+          <button class="btn btn-success" :disabled="!canDownload || !serverFilename || saving || loading" @click="saveServerTheme">
             {{ saving ? '提交 / 推送中...' : '保存、提交并 push' }}
           </button>
           <button class="btn btn-secondary" :disabled="saving || loading" @click="retryPush">重试推送</button>
@@ -95,6 +95,7 @@
           <h3>角色配置</h3>
           <button class="btn btn-primary" @click="addCharacter">+ 添加角色</button>
         </div>
+        <p class="server-hint">头像请填写图片直链；可使用独立图片工具裁剪、上传后粘贴。</p>
 
         <div v-if="characters.length === 0" class="empty-state">
           <p>暂无角色，请点击上方按钮添加</p>
@@ -126,19 +127,6 @@
                 <label>头像链接</label>
                 <textarea v-model="char.avatarInput" rows="2"
                   placeholder="每行一个链接，支持多个头像（选填）"></textarea>
-                <div class="upload-row">
-                  <input
-                    :ref="element => setAvatarUploadInput(char._id, element)"
-                    type="file"
-                    accept="image/*"
-                    class="avatar-upload-input"
-                    @change="event => uploadAvatar(index, event)"
-                  />
-                  <button class="btn btn-primary btn-upload" type="button" :disabled="uploadingCharacterId === char._id" @click="openAvatarPicker(char._id)">
-                    {{ uploadingCharacterId === char._id ? '上传中...' : '上传图片' }}
-                  </button>
-                  <span v-if="uploadMessage.characterId === char._id" :class="uploadMessage.isError ? 'error-msg' : 'success-msg'">{{ uploadMessage.text }}</span>
-                </div>
               </div>
 
               <!-- 图片预览 -->
@@ -185,59 +173,11 @@
       </fieldset>
     </div>
 
-    <div v-if="cropDialog.visible" class="crop-modal" @click.self="!cropDialog.processing && cancelCrop()">
-      <div class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="crop-dialog-title">
-        <div class="crop-dialog-header">
-          <h3 id="crop-dialog-title">裁剪头像</h3>
-          <button class="btn-close" type="button" aria-label="关闭" :disabled="cropDialog.processing" @click="cancelCrop">×</button>
-        </div>
-        <div ref="cropStage" class="crop-stage">
-          <img ref="cropImage" :src="cropDialog.sourceUrl" alt="待裁剪图片" draggable="false" @load="initializeCrop" />
-          <div v-if="cropDialog.ready" class="crop-selection" :style="cropSelectionStyle" @pointerdown.prevent="!cropDialog.processing && startCropDrag($event)"></div>
-        </div>
-        <label class="crop-size-control">
-          裁剪范围
-          <input v-model.number="cropDialog.sizeRatio" type="range" min="0.2" max="1" step="0.01" :disabled="cropDialog.processing" @input="updateCropSize" />
-        </label>
-        <div class="crop-actions">
-          <button class="btn btn-secondary" type="button" :disabled="cropDialog.processing" @click="cancelCrop">取消</button>
-          <button class="btn btn-secondary" type="button" :disabled="!cropDialog.ready || cropDialog.processing" @click="downloadCrop">下载裁剪图片</button>
-          <button class="btn btn-success" type="button" :disabled="!cropDialog.ready || cropDialog.processing" @click="confirmCrop">
-            {{ cropDialog.processing ? cropDialog.statusText : '裁剪并上传' }}
-          </button>
-        </div>
-        <div v-if="cropDialog.processing" class="crop-loading"><span class="spinner"></span>{{ cropDialog.statusText }}</div>
-      </div>
-    </div>
-
-    <details class="image-host-fallback">
-      <summary>备用图床设置</summary>
-      <label>
-        Postimages API Key
-        <input v-model="imageHostFallbackApiKey" type="password" autocomplete="off" placeholder="留空时使用内置 Key" />
-      </label>
-      <p v-if="croppedDownload">
-        <a :href="croppedDownload.url" :download="croppedDownload.name">下载上次裁剪图片</a>
-        · <a href="https://postimages.org/" target="_blank" rel="noopener noreferrer">打开 Postimages 手动上传</a>，再将直链粘贴到头像链接。
-      </p>
-    </details>
-
-    <div v-if="errorDialog.visible" class="error-modal" @click.self="closeErrorDialog">
-      <div class="error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-dialog-title">
-        <h3 id="error-dialog-title">上传失败</h3>
-        <p>{{ errorDialog.message }}</p>
-        <p v-if="croppedDownload">
-          <a :href="croppedDownload.url" :download="croppedDownload.name">下载裁剪结果</a>
-          · <a href="https://postimages.org/" target="_blank" rel="noopener noreferrer">去 Postimages 上传</a>，然后粘贴图片直链。
-        </p>
-        <button class="btn btn-primary" type="button" @click="closeErrorDialog">知道了</button>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { serializeTheme } from '../lib/theme-format.js';
 
 const STORAGE_KEY = 'coffee-theme-maker-draft';
@@ -254,10 +194,6 @@ const createDefaultConfig = () => ({
   sunset: '',
   lockable: true
 });
-
-const POSTIMAGES_API_KEY = 'b3969a2f93b5206ba2e7e0b26c851742';
-const POSTIMAGES_GALLERY = 'default';
-const IMAGE_HOST_FALLBACK_API_KEY_STORAGE_KEY = 'coffee-theme-maker-postimages-api-key';
 
 let nextCharacterNumber = 1;
 let nextInternalId = 1;
@@ -370,7 +306,6 @@ const resetAll = () => {
 
 // 主题基本配置
 const config = ref(createDefaultConfig());
-const imageHostFallbackApiKey = ref(localStorage.getItem(IMAGE_HOST_FALLBACK_API_KEY_STORAGE_KEY) || '');
 
 // 角色列表
 const characters = ref([]);
@@ -425,261 +360,6 @@ const restoreDraft = () => {
 
 onMounted(() => { restoreDraft(); refreshThemes(); });
 watch([config, characters, availability, serverFilename], saveDraft, { deep: true });
-watch(imageHostFallbackApiKey, value => {
-  if (value.trim()) {
-    localStorage.setItem(IMAGE_HOST_FALLBACK_API_KEY_STORAGE_KEY, value.trim());
-  } else {
-    localStorage.removeItem(IMAGE_HOST_FALLBACK_API_KEY_STORAGE_KEY);
-  }
-});
-
-const avatarUploadInputs = new Map();
-const uploadingCharacterId = ref(null);
-const uploadMessage = ref({ characterId: null, text: '', isError: false });
-const errorDialog = ref({ visible: false, message: '' });
-const croppedDownload = ref(null);
-function rememberCrop(file) {
-  if (croppedDownload.value) URL.revokeObjectURL(croppedDownload.value.url);
-  croppedDownload.value = { url: URL.createObjectURL(file), name: file.name };
-}
-onUnmounted(() => {
-  stopCropDrag();
-  if (croppedDownload.value) URL.revokeObjectURL(croppedDownload.value.url);
-  if (cropDialog.value.sourceUrl) URL.revokeObjectURL(cropDialog.value.sourceUrl);
-});
-const cropImage = ref(null);
-const cropDialog = ref({
-  visible: false,
-  ready: false,
-  sourceUrl: '',
-  file: null,
-  characterId: null,
-  x: 0,
-  y: 0,
-  size: 0,
-  sizeRatio: 1,
-  naturalWidth: 0,
-  naturalHeight: 0,
-  displayScale: 1,
-  processing: false,
-  statusText: ''
-});
-let cropDragStart = null;
-
-const setAvatarUploadInput = (characterId, element) => {
-  if (element) {
-    avatarUploadInputs.set(characterId, element);
-  } else {
-    avatarUploadInputs.delete(characterId);
-  }
-};
-
-const openAvatarPicker = (characterId) => {
-  avatarUploadInputs.get(characterId)?.click();
-};
-
-const readImageAsBase64 = file => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result).split(',')[1]);
-  reader.onerror = () => reject(new Error('图片读取失败'));
-  reader.readAsDataURL(file);
-});
-
-const getPostimagesDirectUrl = async (file) => {
-  const extension = file.name.includes('.') ? file.name.split('.').pop() : '';
-  const name = file.name.replace(/\.[^.]+$/, '');
-  const form = new URLSearchParams({
-    key: imageHostFallbackApiKey.value.trim() || POSTIMAGES_API_KEY,
-    gallery: POSTIMAGES_GALLERY,
-    o: '2b819584285c102318568238c7d4a4c7',
-    m: '59c2ad4b46b0c1e12d5703302bff0120',
-    version: '1.0.1',
-    portable: '1',
-    name,
-    type: extension,
-    image: await readImageAsBase64(file)
-  });
-  const uploadResponse = await directFetch('https://api.postimage.org/1/upload', '上传接口', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-    body: form
-  });
-  const uploadResponseBody = await uploadResponse.text();
-  const uploadError = uploadResponseBody.match(/<error>([\s\S]*?)<\/error>/)?.[1].trim();
-  if (!uploadResponse.ok || uploadError) {
-    throw new Error(uploadError || `上传失败（${uploadResponse.status}）`);
-  }
-  const xml = new DOMParser().parseFromString(uploadResponseBody, 'application/xml');
-  for (const tag of ['hotlink', 'direct_link', 'direct', 'image', 'url']) {
-    const candidate = xml.querySelector(tag)?.textContent?.trim();
-    if (candidate && /^https:\/\/i\.postimg\.cc\//.test(candidate)) return candidate;
-  }
-  const page = uploadResponseBody.match(/<page>(https:\/\/postimg\.cc\/\w*)<\/page>/)?.[1];
-  if (!page) throw new Error('上传成功但未获取到图片页面地址');
-
-  const pageResponse = await directFetch(page, '图片直链页面');
-  const pageResponseBody = await pageResponse.text();
-  if (!pageResponse.ok) throw new Error(`获取图片链接失败（${pageResponse.status}）`);
-  const pageDocument = new DOMParser().parseFromString(pageResponseBody, 'text/html');
-  const directUrl = pageDocument.querySelector('#code_direct')?.value ||
-    pageDocument.querySelector('meta[property="og:image"]')?.content ||
-    pageResponseBody.match(/https:\/\/i\.postimg\.cc\/[^"'\s<>]+\?dl=1/)?.[0];
-  if (directUrl && !/^https:\/\/i\.postimg\.cc\//.test(directUrl)) throw new Error('图床返回的图片直链格式不正确');
-  if (!directUrl) throw new Error('未能从图片页面解析直链');
-  return directUrl;
-};
-
-async function directFetch(url, step, options = {}) {
-  try { return await fetch(url, { ...options, signal: AbortSignal.timeout(60000) }); }
-  catch (error) {
-    throw new Error(`${step}浏览器直连失败（${error.message}）。请检查本机网络和图床跨域权限，或下载裁剪结果后手动上传。`);
-  }
-}
-
-const closeErrorDialog = () => {
-  errorDialog.value.visible = false;
-};
-
-const uploadAvatar = async (characterIndex, event) => {
-  const file = event.target.files?.[0];
-  const char = characters.value[characterIndex];
-  event.target.value = '';
-  if (!file || !char) return;
-  if (!file.type.startsWith('image/')) {
-    uploadMessage.value = { characterId: char._id, text: '请选择图片文件', isError: true };
-    return;
-  }
-
-  cropDialog.value = {
-    visible: true,
-    ready: false,
-    sourceUrl: URL.createObjectURL(file),
-    file,
-    characterId: char._id,
-    x: 0,
-    y: 0,
-    size: 0,
-    sizeRatio: 1,
-    naturalWidth: 0,
-    naturalHeight: 0,
-    displayScale: 1,
-    processing: false,
-    statusText: ''
-  };
-};
-
-const initializeCrop = () => {
-  const image = cropImage.value;
-  if (!image) return;
-  const maxSize = Math.min(image.naturalWidth, image.naturalHeight);
-  cropDialog.value.naturalWidth = image.naturalWidth;
-  cropDialog.value.naturalHeight = image.naturalHeight;
-  cropDialog.value.size = maxSize;
-  cropDialog.value.x = (image.naturalWidth - maxSize) / 2;
-  cropDialog.value.y = (image.naturalHeight - maxSize) / 2;
-  cropDialog.value.displayScale = image.clientWidth / image.naturalWidth;
-  cropDialog.value.ready = true;
-};
-
-const updateCropSize = () => {
-  const dialog = cropDialog.value;
-  const maxSize = Math.min(dialog.naturalWidth, dialog.naturalHeight);
-  const newSize = maxSize * dialog.sizeRatio;
-  dialog.x = Math.max(0, Math.min(dialog.x + (dialog.size - newSize) / 2, dialog.naturalWidth - newSize));
-  dialog.y = Math.max(0, Math.min(dialog.y + (dialog.size - newSize) / 2, dialog.naturalHeight - newSize));
-  dialog.size = newSize;
-};
-
-const cropSelectionStyle = computed(() => {
-  const dialog = cropDialog.value;
-  const scale = dialog.displayScale;
-  return {
-    left: `${dialog.x * scale}px`,
-    top: `${dialog.y * scale}px`,
-    width: `${dialog.size * scale}px`,
-    height: `${dialog.size * scale}px`
-  };
-});
-
-const startCropDrag = event => {
-  const dialog = cropDialog.value;
-  cropDragStart = { clientX: event.clientX, clientY: event.clientY, x: dialog.x, y: dialog.y };
-  window.addEventListener('pointermove', moveCropDrag);
-  window.addEventListener('pointerup', stopCropDrag, { once: true });
-};
-
-const moveCropDrag = event => {
-  if (!cropDragStart) return;
-  const dialog = cropDialog.value;
-  dialog.x = Math.max(0, Math.min(cropDragStart.x + (event.clientX - cropDragStart.clientX) / dialog.displayScale, dialog.naturalWidth - dialog.size));
-  dialog.y = Math.max(0, Math.min(cropDragStart.y + (event.clientY - cropDragStart.clientY) / dialog.displayScale, dialog.naturalHeight - dialog.size));
-};
-
-const stopCropDrag = () => {
-  cropDragStart = null;
-  window.removeEventListener('pointermove', moveCropDrag);
-};
-
-const cancelCrop = () => {
-  stopCropDrag();
-  if (cropDialog.value.sourceUrl) URL.revokeObjectURL(cropDialog.value.sourceUrl);
-  cropDialog.value.visible = false;
-};
-
-const createCroppedImage = () => {
-  const dialog = cropDialog.value;
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
-  const context = canvas.getContext('2d');
-  context.drawImage(cropImage.value, dialog.x, dialog.y, dialog.size, dialog.size, 0, 0, 512, 512);
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(blob => {
-      if (blob) resolve(new File([blob], `${dialog.file.name.replace(/\.[^.]+$/, '')}.png`, { type: 'image/png' }));
-      else reject(new Error('裁剪图片失败'));
-    }, 'image/png');
-  });
-};
-
-async function downloadCrop() {
-  try {
-    rememberCrop(await createCroppedImage());
-    const link = document.createElement('a');
-    link.href = croppedDownload.value.url;
-    link.download = croppedDownload.value.name;
-    link.click();
-  } catch (error) { errorDialog.value = { visible: true, message: error.message }; }
-}
-
-const confirmCrop = async () => {
-  const dialog = cropDialog.value;
-  const char = characters.value.find(item => item._id === dialog.characterId);
-  if (!char) {
-    cancelCrop();
-    return;
-  }
-
-  uploadingCharacterId.value = char._id;
-  dialog.processing = true;
-  dialog.statusText = '正在生成 PNG...';
-  uploadMessage.value = { characterId: char._id, text: '', isError: false };
-  try {
-    const croppedFile = await createCroppedImage();
-    rememberCrop(croppedFile);
-    dialog.statusText = '正在上传图片...';
-    const url = await getPostimagesDirectUrl(croppedFile);
-    char.avatarInput = [char.avatarInput.trim(), url].filter(Boolean).join('\n');
-    uploadMessage.value = { characterId: char._id, text: '上传成功，已添加到头像链接', isError: false };
-  } catch (error) {
-    const detail = error instanceof TypeError ? '浏览器直传失败，请检查本机网络，以及图床上传和直链页面的跨域权限' : error.message;
-    uploadMessage.value = { characterId: char._id, text: detail, isError: true };
-    errorDialog.value = { visible: true, message: detail };
-  } finally {
-    uploadingCharacterId.value = null;
-    cancelCrop();
-  }
-};
-
 // 获取头像数组（从输入文本解析）
 const getAvatars = (char) => {
   if (!char.avatarInput) return [];
@@ -927,212 +607,6 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   font-size: 12px;
   color: #dc3545;
   margin-top: 4px;
-}
-
-.success-msg {
-  font-size: 12px;
-  color: #198754;
-  margin-top: 4px;
-}
-
-.upload-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.avatar-upload-input {
-  display: none;
-}
-
-.btn-upload {
-  padding: 7px 12px;
-  font-size: 12px;
-}
-
-.crop-modal {
-  position: fixed;
-  z-index: 10;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(0, 0, 0, 0.6);
-}
-
-.image-host-fallback {
-  position: fixed;
-  right: 12px;
-  bottom: 10px;
-  z-index: 5;
-  max-width: calc(100vw - 24px);
-  color: #777;
-  font-size: 12px;
-}
-
-.image-host-fallback summary {
-  cursor: pointer;
-  user-select: none;
-}
-
-.image-host-fallback label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 250px;
-  margin-top: 6px;
-  padding: 8px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: #fff;
-}
-
-.image-host-fallback input {
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid #ddd;
-  border-radius: 3px;
-  font-size: 12px;
-}
-
-.error-modal {
-  position: fixed;
-  z-index: 20;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(0, 0, 0, 0.45);
-}
-
-.error-dialog {
-  width: min(100%, 420px);
-  padding: 20px;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-}
-
-.error-dialog h3 {
-  margin: 0;
-  color: #b42318;
-  font-size: 18px;
-}
-
-.error-dialog p {
-  margin: 12px 0 18px;
-  color: #444;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.error-dialog .btn {
-  display: block;
-  margin-left: auto;
-}
-
-.crop-dialog {
-  width: min(100%, 560px);
-  padding: 20px;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.crop-dialog-header,
-.crop-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.crop-dialog-header h3 {
-  margin: 0;
-  color: #333;
-}
-
-.btn-close {
-  border: none;
-  background: none;
-  color: #666;
-  font-size: 28px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.crop-stage {
-  position: relative;
-  display: flex;
-  width: fit-content;
-  max-width: 100%;
-  justify-content: center;
-  margin: 16px auto;
-  overflow: hidden;
-  background: #222;
-}
-
-.crop-stage img {
-  display: block;
-  max-width: 100%;
-  max-height: 55vh;
-  user-select: none;
-}
-
-.crop-selection {
-  position: absolute;
-  box-sizing: border-box;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
-  cursor: move;
-  touch-action: none;
-}
-
-.crop-size-control {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: #555;
-  font-size: 14px;
-}
-
-.crop-size-control input {
-  flex: 1;
-}
-
-.crop-actions {
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 20px;
-}
-
-.crop-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  margin-top: 16px;
-  padding: 10px;
-  color: #555;
-  font-size: 14px;
-}
-
-.spinner {
-  width: 18px;
-  height: 18px;
-  box-sizing: border-box;
-  border: 2px solid #c8d2dc;
-  border-top-color: #007bff;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .empty-state {

@@ -1,0 +1,38 @@
+主题图像工具 v1.0.2
+
+双击 ThemeImageUploader.exe 即可使用，无需安装。
+文件名可能包含版本号，例如 ThemeImageUploader-1.0.2.exe。
+v1.0.1 已修复大图片上传时“无效的 URI: URI 字符串太长”的问题。
+运行环境：Windows 10/11，自带 .NET Framework 4.8；不需要 Node.js。
+
+1. 打开图片，或把图片文件拖进窗口；也可以 Ctrl+V 粘贴剪贴板图片。
+2. 拖动正方形选框移动取景，拖动右下角手柄调整大小。
+   滚轮和右侧滑杆也能调整选框范围。
+3. 选择输出尺寸（默认 512 × 512），点“裁剪并上传”。
+4. 上传完成自动复制图片直链，可粘贴到 thememaker 的头像链接。
+   也可只点“保存裁剪图”，全程不上传。
+
+支持 PNG、JPG、JPEG、BMP、GIF、TIFF；动图使用第一帧。
+上传统一生成正方形 PNG，保留透明背景。
+图片由本机直接发往 Postimages，不经过 jinrou 网站服务器，
+不受网页跨域限制。需要本机网络能访问 api.postimage.org。
+
+“上传记录”中可重新复制链接或打开图片页。
+记录保存在 %LOCALAPPDATA%\ThemeImageUploader\history.jsonl，
+包含时间、文件名、输出尺寸、PNG 的 SHA-256、图片直链、图片页、
+删除页链接（若图床返回），不保存原图和 API Key。
+记录只存在这台电脑，不是 Git 记录；保存主题到网站后，主题中的链接
+仍由 thememaker 按原流程提交并 push 到游戏仓库。
+
+默认沿用 thememaker 现有 Postimages Key。
+如果图床提示 Key 无效或额度不足，可在“自定义 API Key”中填写自己的
+Key，仅本次运行生效。原图变化、取景变化或输出尺寸变化后，需要重新上传。
+Key 输入框下的“自取账号API链接”可打开 https://postimages.org/login/api。
+网络超时有可能已经上传成功，请先检查结果或记录，避免反复点击。
+
+维护与编译：
+源码 Uploader.cs；在 PowerShell 执行 .\build.ps1。
+build.ps1 通过 Windows 自带 C# 编译器生成 dist\ThemeImageUploader.exe，
+构建时从 postimages-defaults.json 读取沿用的默认 Key；也可执行：
+  .\build.ps1 -ApiKey 你的Key
+程序没有自更新，不会修改服务器或主题文件。

@@ -56,9 +56,7 @@ git -C .local-data/themes-repo config user.email "你的 Git 邮箱"
 
 ## 图片
 
-图片在浏览器裁剪为 512×512 PNG，由**玩家浏览器**直接发送到 `https://api.postimage.org/1/upload`。优先使用上传响应中的直链，否则由浏览器直接读取 `postimg.cc` 图片页面取得直链。两步都不经过本后端或 Vite 代理，因此需要图床分别允许当前页面来源的跨域访问。失败会显示提示；不会暗中退回服务器代理。支持自填 Postimages Key，保存在当前浏览器本地。
-
-本机 localhost 实测中，上传接口的 HTTP 200 响应没有 `Access-Control-Allow-Origin`，浏览器无法读取结果，不能把它当作直传已验证成功。已提供「下载裁剪图片」和失败后的「下载裁剪结果 / 去 Postimages 上传」入口，可自行上传并粘贴直链；是否允许正式域名仍需另行验证。
+网页只填写、预览图片直链，已移除网页原生上传、裁剪和图床 Key 设置。可用独立的 Windows [主题图像工具](tools/image-uploader/README.md) 在本机裁剪、上传并复制直链，再粘贴到角色的头像链接；也可直接填写其他图床的直链。
 
 ## 构建与检查
 
