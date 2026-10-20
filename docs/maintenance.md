@@ -2,7 +2,7 @@
 
 ## 先记住这几件事
 
-- 网页：`https://jinrou.icu/thememaker/`，API：`/thememaker-api/`。
+- 网页：`https://www.jinrou.icu/thememaker/`，API：`/thememaker-api/`。
 - 编辑器代码：`/srv/jinrou/thememaker`，来自 `Nanaya716/jinrouThememaker` 的 `main`。
 - 实际编辑的主题：`/srv/jinrou/app/server/themes`，Git 历史属于 `Nanaya716/jinrou` 的 `nanayaBranch`，**不在编辑器仓库里**。
 - 服务：`thememaker.service`；配置：`/srv/jinrou/shared/thememaker.env`；端口：`127.0.0.1:4318`。
@@ -10,6 +10,8 @@
 - 没有账号系统，任何能打开网页的人都能修改主题，后保存覆盖先保存。提交身份统一使用服务器游戏仓库配置的 Git 身份；不记录玩家真实身份。
 
 下面所有命令均在 `ssh root@8.137.83.4` 后执行。
+
+部署时已确认常用的 `www.jinrou.icu` 解析到此服务器。裸域 `jinrou.icu` 当时解析到其他地址，访问异常；本文使用带 `www` 的网址，不修改 DNS。若以后出现「服务器健康但域名打不开」，先检查是否访问了错误的主机名，以及对应 DNS 记录。
 
 ## 日常编辑
 
