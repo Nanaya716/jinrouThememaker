@@ -11,17 +11,11 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/postimages-api': {
-        target: 'https://api.postimage.org',
-        changeOrigin: true,
-        rewrite: path => path.replace(/^\/postimages-api/, '')
-      },
-      '/postimages-page': {
-        target: 'https://postimg.cc',
-        changeOrigin: true,
-        rewrite: path => path.replace(/^\/postimages-page/, '')
+      '/thememaker-api': {
+        target: `http://127.0.0.1:${process.env.PORT || 4318}`,
+        changeOrigin: false,
       }
     }
   },
-  base: '/thememaker'
+  base: '/thememaker/'
 })

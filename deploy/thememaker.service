@@ -1,0 +1,25 @@
+[Unit]
+Description=Jinrou ThemeMaker
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/srv/jinrou/thememaker
+Environment=NODE_ENV=production
+Environment=PATH=/opt/jinrou-node22/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=NODE_OPTIONS=--max-old-space-size=128
+EnvironmentFile=/srv/jinrou/shared/thememaker.env
+ExecStart=/opt/jinrou-node22/bin/node /srv/jinrou/thememaker/server/index.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=45
+MemoryHigh=192M
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target

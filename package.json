@@ -3,12 +3,20 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.js",
+    "setup:local": "node scripts/setup-local.js",
+    "start": "node server/index.js",
+    "test": "node --test",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "acorn": "^8.15.0",
+    "coffee-script": "^1.12.7",
     "vue": "^3.5.13"
   },
   "devDependencies": {

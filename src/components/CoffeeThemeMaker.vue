@@ -3,6 +3,41 @@
     <div class="container">
       <h2 class="title">Coffee 主题文件生成器</h2>
 
+      <section class="config-section server-section">
+        <h3>在线主题</h3>
+        <p class="server-hint">整文件保存，后提交的版本覆盖前一个版本；每次保存都会提交 Git 并 push。</p>
+        <div class="server-controls">
+          <select v-model="selectedTheme" :disabled="saving || loading" aria-label="选择服务器主题">
+            <option value="">选择现有主题</option>
+            <option v-for="theme in serverThemes" :key="theme.filename" :value="theme.filename">
+              {{ theme.name }} · {{ theme.filename }}{{ theme.unsupported ? '（格式需检查）' : '' }}
+            </option>
+          </select>
+          <button class="btn btn-primary" :disabled="!selectedTheme || saving || loading" @click="loadServerTheme">{{ loading ? '读取中...' : '打开主题' }}</button>
+          <button class="btn btn-secondary" :disabled="saving || loading" @click="refreshThemes">刷新列表</button>
+        </div>
+        <div class="form-grid server-save-fields">
+          <div class="form-item">
+            <label>保存文件名</label>
+            <input v-model="serverFilename" :disabled="saving || loading" placeholder="例如 touhou.coffee" />
+          </div>
+          <div class="form-item">
+            <label>修改说明（选填）</label>
+            <input v-model="commitMessage" :disabled="saving || loading" maxlength="200" placeholder="例如 补充头像、修正角色名称" />
+          </div>
+        </div>
+        <div class="server-controls">
+          <button class="btn btn-success" :disabled="!canDownload || !serverFilename || saving || loading || cropDialog.visible" @click="saveServerTheme">
+            {{ saving ? '提交 / 推送中...' : '保存、提交并 push' }}
+          </button>
+          <button class="btn btn-secondary" :disabled="saving || loading" @click="retryPush">重试推送</button>
+        </div>
+        <p v-if="serverStatus.text" class="server-status" :class="{ 'error-msg': serverStatus.error }" role="status">{{ serverStatus.text }}</p>
+        <p v-for="(warning, index) in parseWarnings" :key="index" class="server-hint">{{ warning }}</p>
+      </section>
+
+      <fieldset :disabled="saving || loading" class="editor-fields">
+
       <!-- 导入文件区域 -->
       <section class="config-section">
         <h3>导入/导出</h3>
@@ -17,6 +52,18 @@
           </div>
         </div>
       </section>
+
+      <details class="config-section">
+        <summary>其他主题设置</summary>
+        <div class="form-grid server-save-fields">
+          <div v-for="field in extraFields" :key="field.key" class="form-item">
+            <label>{{ field.label }}</label>
+            <input v-model="config[field.key]" type="text" />
+          </div>
+          <label><input v-model="config.lockable" type="checkbox" /> 允许密码房</label>
+          <label><input v-model="availability" type="checkbox" /> 主题可用</label>
+        </div>
+      </details>
 
       <!-- 基本配置区域 -->
       <section class="config-section">
@@ -135,6 +182,7 @@
           </button>
         </div>
       </section>
+      </fieldset>
     </div>
 
     <div v-if="cropDialog.visible" class="crop-modal" @click.self="!cropDialog.processing && cancelCrop()">
@@ -153,6 +201,7 @@
         </label>
         <div class="crop-actions">
           <button class="btn btn-secondary" type="button" :disabled="cropDialog.processing" @click="cancelCrop">取消</button>
+          <button class="btn btn-secondary" type="button" :disabled="!cropDialog.ready || cropDialog.processing" @click="downloadCrop">下载裁剪图片</button>
           <button class="btn btn-success" type="button" :disabled="!cropDialog.ready || cropDialog.processing" @click="confirmCrop">
             {{ cropDialog.processing ? cropDialog.statusText : '裁剪并上传' }}
           </button>
@@ -167,12 +216,20 @@
         Postimages API Key
         <input v-model="imageHostFallbackApiKey" type="password" autocomplete="off" placeholder="留空时使用内置 Key" />
       </label>
+      <p v-if="croppedDownload">
+        <a :href="croppedDownload.url" :download="croppedDownload.name">下载上次裁剪图片</a>
+        · <a href="https://postimages.org/" target="_blank" rel="noopener noreferrer">打开 Postimages 手动上传</a>，再将直链粘贴到头像链接。
+      </p>
     </details>
 
     <div v-if="errorDialog.visible" class="error-modal" @click.self="closeErrorDialog">
       <div class="error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-dialog-title">
         <h3 id="error-dialog-title">上传失败</h3>
         <p>{{ errorDialog.message }}</p>
+        <p v-if="croppedDownload">
+          <a :href="croppedDownload.url" :download="croppedDownload.name">下载裁剪结果</a>
+          · <a href="https://postimages.org/" target="_blank" rel="noopener noreferrer">去 Postimages 上传</a>，然后粘贴图片直链。
+        </p>
         <button class="btn btn-primary" type="button" @click="closeErrorDialog">知道了</button>
       </div>
     </div>
@@ -180,7 +237,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { serializeTheme } from '../lib/theme-format.js';
 
 const STORAGE_KEY = 'coffee-theme-maker-draft';
 const createDefaultConfig = () => ({
@@ -210,6 +268,83 @@ const generateCharacterId = () => `character_${nextCharacterNumber++}`;
 // 导入错误
 const importError = ref('');
 const fileInput = ref(null);
+const serverThemes = ref([]);
+const selectedTheme = ref('');
+const serverFilename = ref('');
+const commitMessage = ref('');
+const loading = ref(false);
+const saving = ref(false);
+const availability = ref(true);
+const serverStatus = ref({ text: '', error: false });
+const parseWarnings = ref([]);
+const originalKeys = ref(null);
+const extraFields = [
+  { key: 'vote', label: '投票提示' }, { key: 'sunrise', label: '天亮提示' },
+  { key: 'sunset', label: '入夜提示' }, { key: 'icon', label: '主题图标' },
+  { key: 'color', label: '文字颜色' }, { key: 'background_color', label: '背景颜色' },
+];
+async function api(url, options = {}) {
+  const response = await fetch(`/thememaker-api${url}`, {
+    ...options, headers: { 'Content-Type': 'application/json', ...options.headers },
+  });
+  const result = await response.json();
+  if (!response.ok) throw Object.assign(new Error(result.error || '请求失败'), result);
+  return result;
+}
+async function refreshThemes() {
+  try { serverThemes.value = await api('/themes'); }
+  catch (error) { serverStatus.value = { text: `读取主题列表失败：${error.message}`, error: true }; }
+}
+function applyTheme(parsed) {
+  parseWarnings.value = parsed.warnings || [];
+  originalKeys.value = Object.keys(parsed.data);
+  const { skins, ...settings } = parsed.data;
+  config.value = { ...createDefaultConfig(), ...settings };
+  availability.value = parsed.available;
+  characters.value = Object.entries(skins || {}).map(([id, skin]) => ({
+    _id: generateInternalId(), id, name: skin.name,
+    avatarInput: Array.isArray(skin.avatar) ? skin.avatar.join('\n') : skin.avatar || '',
+    prizeInput: Array.isArray(skin.prize) ? skin.prize.join('\n') : skin.prize || '',
+    _extra: skin,
+  }));
+  updateNextCharacterNumber();
+}
+async function loadServerTheme() {
+  loading.value = true;
+  try {
+    const theme = await api(`/themes/${encodeURIComponent(selectedTheme.value)}`);
+    applyTheme(theme);
+    serverFilename.value = theme.filename;
+    commitMessage.value = '';
+    serverStatus.value = { text: `已打开 ${theme.filename}，保存时会覆盖该文件。`, error: false };
+  } catch (error) { serverStatus.value = { text: error.message, error: true }; }
+  finally { loading.value = false; }
+}
+async function saveServerTheme() {
+  saving.value = true;
+  const now = new Date().toISOString();
+  try {
+    const source = serializeTheme({ ...buildThemeData(), lastModified: now }, availability.value);
+    const result = await api(`/themes/${encodeURIComponent(serverFilename.value)}`, {
+      method: 'PUT', body: JSON.stringify({ source, message: commitMessage.value }),
+    });
+    config.value.lastModified = now;
+    selectedTheme.value = serverFilename.value;
+    serverStatus.value = { text: `保存成功，已提交并 push：${result.commit.slice(0, 12)}`, error: false };
+    await refreshThemes();
+  } catch (error) {
+    if (error.saved) config.value.lastModified = now;
+    serverStatus.value = { text: `${error.message}${error.commit ? `（提交 ${error.commit.slice(0, 12)}）` : ''}`, error: true };
+  } finally { saving.value = false; }
+}
+async function retryPush() {
+  saving.value = true;
+  try {
+    const result = await api('/push', { method: 'POST', body: '{}' });
+    serverStatus.value = { text: `推送成功：${result.commit.slice(0, 12)}`, error: false };
+  } catch (error) { serverStatus.value = { text: error.message, error: true }; }
+  finally { saving.value = false; }
+}
 
 // 验证提示展开状态
 const showValidation = ref(false);
@@ -219,6 +354,12 @@ const resetAll = () => {
   config.value = createDefaultConfig();
   characters.value = [];
   nextCharacterNumber = 1;
+  availability.value = true;
+  originalKeys.value = null;
+  parseWarnings.value = [];
+  serverFilename.value = '';
+  selectedTheme.value = '';
+  serverStatus.value = { text: '', error: false };
   importError.value = '';
   skipNextDraftSave = true;
   localStorage.removeItem(STORAGE_KEY);
@@ -249,7 +390,10 @@ const saveDraft = () => {
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     config: config.value,
-    characters: characters.value
+    characters: characters.value,
+    available: availability.value,
+    filename: serverFilename.value,
+    originalKeys: originalKeys.value,
   }));
 };
 
@@ -260,13 +404,17 @@ const restoreDraft = () => {
   try {
     const saved = JSON.parse(draft);
     config.value = { ...createDefaultConfig(), ...saved.config };
+    availability.value = saved.available ?? true;
+    serverFilename.value = saved.filename || '';
+    originalKeys.value = saved.originalKeys || null;
     characters.value = Array.isArray(saved.characters)
       ? saved.characters.map(char => ({
         _id: generateInternalId(),
         id: char.id || generateCharacterId(),
         name: char.name || '',
         prizeInput: char.prizeInput || '',
-        avatarInput: char.avatarInput || ''
+        avatarInput: char.avatarInput || '',
+        _extra: char._extra || {},
       }))
       : [];
     updateNextCharacterNumber();
@@ -275,8 +423,8 @@ const restoreDraft = () => {
   }
 };
 
-onMounted(restoreDraft);
-watch([config, characters], saveDraft, { deep: true });
+onMounted(() => { restoreDraft(); refreshThemes(); });
+watch([config, characters, availability, serverFilename], saveDraft, { deep: true });
 watch(imageHostFallbackApiKey, value => {
   if (value.trim()) {
     localStorage.setItem(IMAGE_HOST_FALLBACK_API_KEY_STORAGE_KEY, value.trim());
@@ -289,6 +437,16 @@ const avatarUploadInputs = new Map();
 const uploadingCharacterId = ref(null);
 const uploadMessage = ref({ characterId: null, text: '', isError: false });
 const errorDialog = ref({ visible: false, message: '' });
+const croppedDownload = ref(null);
+function rememberCrop(file) {
+  if (croppedDownload.value) URL.revokeObjectURL(croppedDownload.value.url);
+  croppedDownload.value = { url: URL.createObjectURL(file), name: file.name };
+}
+onUnmounted(() => {
+  stopCropDrag();
+  if (croppedDownload.value) URL.revokeObjectURL(croppedDownload.value.url);
+  if (cropDialog.value.sourceUrl) URL.revokeObjectURL(cropDialog.value.sourceUrl);
+});
 const cropImage = ref(null);
 const cropDialog = ref({
   visible: false,
@@ -341,29 +499,42 @@ const getPostimagesDirectUrl = async (file) => {
     type: extension,
     image: await readImageAsBase64(file)
   });
-  const uploadResponse = await fetch('/postimages-api/1/upload', {
+  const uploadResponse = await directFetch('https://api.postimage.org/1/upload', '上传接口', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
     body: form
   });
   const uploadResponseBody = await uploadResponse.text();
-  console.log('[Postimages] 上传接口返回：', uploadResponseBody);
   const uploadError = uploadResponseBody.match(/<error>([\s\S]*?)<\/error>/)?.[1].trim();
   if (!uploadResponse.ok || uploadError) {
     throw new Error(uploadError || `上传失败（${uploadResponse.status}）`);
   }
+  const xml = new DOMParser().parseFromString(uploadResponseBody, 'application/xml');
+  for (const tag of ['hotlink', 'direct_link', 'direct', 'image', 'url']) {
+    const candidate = xml.querySelector(tag)?.textContent?.trim();
+    if (candidate && /^https:\/\/i\.postimg\.cc\//.test(candidate)) return candidate;
+  }
   const page = uploadResponseBody.match(/<page>(https:\/\/postimg\.cc\/\w*)<\/page>/)?.[1];
   if (!page) throw new Error('上传成功但未获取到图片页面地址');
 
-  const pageId = new URL(page).pathname.replace(/^\//, '');
-  const pageResponse = await fetch(`/postimages-page/${pageId}`);
+  const pageResponse = await directFetch(page, '图片直链页面');
   const pageResponseBody = await pageResponse.text();
-  console.log('[Postimages] 图片页面返回：', pageResponseBody);
   if (!pageResponse.ok) throw new Error(`获取图片链接失败（${pageResponse.status}）`);
-  const directUrl = pageResponseBody.match(/https:\/\/i\.postimg\.cc\/\w{8}\/[^"'\s]+\?dl=1/)?.[0];
+  const pageDocument = new DOMParser().parseFromString(pageResponseBody, 'text/html');
+  const directUrl = pageDocument.querySelector('#code_direct')?.value ||
+    pageDocument.querySelector('meta[property="og:image"]')?.content ||
+    pageResponseBody.match(/https:\/\/i\.postimg\.cc\/[^"'\s<>]+\?dl=1/)?.[0];
+  if (directUrl && !/^https:\/\/i\.postimg\.cc\//.test(directUrl)) throw new Error('图床返回的图片直链格式不正确');
   if (!directUrl) throw new Error('未能从图片页面解析直链');
   return directUrl;
 };
+
+async function directFetch(url, step, options = {}) {
+  try { return await fetch(url, { ...options, signal: AbortSignal.timeout(60000) }); }
+  catch (error) {
+    throw new Error(`${step}浏览器直连失败（${error.message}）。请检查本机网络和图床跨域权限，或下载裁剪结果后手动上传。`);
+  }
+}
 
 const closeErrorDialog = () => {
   errorDialog.value.visible = false;
@@ -470,6 +641,16 @@ const createCroppedImage = () => {
   });
 };
 
+async function downloadCrop() {
+  try {
+    rememberCrop(await createCroppedImage());
+    const link = document.createElement('a');
+    link.href = croppedDownload.value.url;
+    link.download = croppedDownload.value.name;
+    link.click();
+  } catch (error) { errorDialog.value = { visible: true, message: error.message }; }
+}
+
 const confirmCrop = async () => {
   const dialog = cropDialog.value;
   const char = characters.value.find(item => item._id === dialog.characterId);
@@ -484,12 +665,13 @@ const confirmCrop = async () => {
   uploadMessage.value = { characterId: char._id, text: '', isError: false };
   try {
     const croppedFile = await createCroppedImage();
+    rememberCrop(croppedFile);
     dialog.statusText = '正在上传图片...';
     const url = await getPostimagesDirectUrl(croppedFile);
     char.avatarInput = [char.avatarInput.trim(), url].filter(Boolean).join('\n');
     uploadMessage.value = { characterId: char._id, text: '上传成功，已添加到头像链接', isError: false };
   } catch (error) {
-    const detail = error instanceof TypeError ? '网络请求被浏览器拦截，请检查图床是否允许跨域访问' : error.message;
+    const detail = error instanceof TypeError ? '浏览器直传失败，请检查本机网络，以及图床上传和直链页面的跨域权限' : error.message;
     uploadMessage.value = { characterId: char._id, text: detail, isError: true };
     errorDialog.value = { visible: true, message: detail };
   } finally {
@@ -558,7 +740,7 @@ const validationErrors = computed(() => {
   } else if (config.value.name.trim().length < 2) {
     errors.push('主题名称至少需要2个字符');
   }
-  if (characters.value.length === 0) {
+  if (characters.value.length === 0 && !config.value.openAvatar) {
     errors.push('至少需要添加一个角色');
   }
   characters.value.forEach((char, index) => {
@@ -574,178 +756,48 @@ const canDownload = computed(() => {
   return validationErrors.value.length === 0;
 });
 
-// 解析 Coffee 文件
-const parseCoffeeFile = (content) => {
+// 导入也走服务端静态解析，和保存使用相同的完整性检查。
+const handleFileImport = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  loading.value = true;
+  importError.value = '';
   try {
-    const result = {
-      config: {
-        name: '',
-        opening: '',
-        author: '',
-        skin_tip: '你的身份',
-        color: '#ff00a6',
-        background_color: '#000000',
-        icon: '',
-        vote: '',
-        sunrise: '',
-        sunset: '',
-        lockable: true
-      },
-      characters: []
-    };
-
-    // 解析基本配置（支持冒号后有空格的格式）
-    const nameMatch = content.match(/name:\s*"([^"]*)"/);
-    if (nameMatch) result.config.name = nameMatch[1];
-
-    const openingMatch = content.match(/opening:\s*"([^"]*)"/);
-    if (openingMatch) result.config.opening = openingMatch[1];
-
-    const authorMatch = content.match(/author:\s*"([^"]*)"/);
-    if (authorMatch) result.config.author = authorMatch[1];
-
-    const skinTipMatch = content.match(/skin_tip:\s*"([^"]*)"/);
-    if (skinTipMatch) result.config.skin_tip = skinTipMatch[1];
-
-    const colorMatch = content.match(/color:\s*"([^"]*)"/);
-    if (colorMatch) result.config.color = colorMatch[1];
-
-    const bgColorMatch = content.match(/background_color:\s*"([^"]*)"/);
-    if (bgColorMatch) result.config.background_color = bgColorMatch[1];
-
-    const lockableMatch = content.match(/lockable:\s*(true|false)/);
-    if (lockableMatch) result.config.lockable = lockableMatch[1] === 'true';
-
-    // 解析 skins 部分
-    // 只跳过 skins: 所在行的空白和换行，保留首个角色前的缩进。
-    const skinsMatch = content.match(/skins:[^\S\r\n]*\r?\n([\s\S]+)/);
-    if (skinsMatch) {
-      const skinsContent = skinsMatch[1];
-      // 匹配每个 skin 块 - 按照顶格的ID后跟冒号来分割
-      const skinBlocks = skinsContent.match(/(?:^|\n)( {8}?)([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[\s\S]*?(?=\n\s{0,8}[a-zA-Z_][a-zA-Z0-9_]*\s*:|$)/g);
-      if (skinBlocks) {
-        skinBlocks.forEach(block => {
-          const idMatch = block.match(/([a-zA-Z_][a-zA-Z0-9_]*)\s*:/);
-          if (!idMatch) return;
-
-          const char = {
-            _id: generateInternalId(),
-            id: idMatch[1],
-            name: '',
-            prizeInput: '',
-            avatarInput: ''
-          };
-
-          // 解析 name（支持空格）
-          const nameMatch = block.match(/name:\s*"([^"]*)"/);
-          if (nameMatch) char.name = nameMatch[1];
-
-          // 解析 prize (可以是字符串或数组，支持空数组)
-          const prizeArrayMatch = block.match(/prize:\s*\[([^\]]*)\]/);
-          const prizeStringMatch = block.match(/prize:\s*"([^"]*)"/);
-          if (prizeArrayMatch) {
-            const prizes = prizeArrayMatch[1].split(',').map(p => p.trim().replace(/"/g, '')).filter(p => p);
-            char.prizeInput = prizes.join('\n');
-          } else if (prizeStringMatch) {
-            char.prizeInput = prizeStringMatch[1];
-          }
-
-          // 解析 avatar (可以是字符串或数组，支持空格)
-          const avatarArrayMatch = block.match(/avatar:\s*\[([^\]]*)\]/);
-          const avatarStringMatch = block.match(/avatar:\s*"([^"]*)"/);
-          if (avatarArrayMatch) {
-            const avatars = avatarArrayMatch[1].split(',').map(a => a.trim().replace(/"/g, '')).filter(a => a);
-            char.avatarInput = avatars.join('\n');
-          } else if (avatarStringMatch) {
-            char.avatarInput = avatarStringMatch[1];
-          }
-
-          result.characters.push(char);
-        });
-      }
-    }
-
-    return result;
-  } catch (e) {
-    console.error('解析失败:', e);
-    return null;
+    const parsed = await api('/parse', { method: 'POST', body: JSON.stringify({ source: await file.text() }) });
+    applyTheme(parsed);
+    serverFilename.value = file.name;
+    selectedTheme.value = '';
+    serverStatus.value = { text: '已导入 ' + file.name + '，尚未保存。', error: false };
+  } catch (error) {
+    importError.value = error.message;
+  } finally {
+    loading.value = false;
+    event.target.value = '';
   }
 };
 
-// 处理文件导入
-const handleFileImport = (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  importError.value = '';
-
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const content = e.target.result;
-    const parsed = parseCoffeeFile(content);
-
-    if (parsed) {
-      config.value = parsed.config;
-      characters.value = parsed.characters;
-      updateNextCharacterNumber();
-      importError.value = '';
-    } else {
-      importError.value = '文件解析失败，请确保是正确的 .coffee 格式';
-    }
-  };
-  reader.onerror = () => {
-    importError.value = '文件读取失败';
-  };
-  reader.readAsText(file);
-};
-
-// 生成 CoffeeScript 代码
-const generatedCoffee = computed(() => {
-  const now = new Date().toISOString();
-
-  let coffee = `module.exports=\n`;
-  coffee += `    name:"${config.value.name}"\n`;
-  coffee += `    opening:"${config.value.opening}"\n`;
-  coffee += `    skin_tip:"${config.value.skin_tip}"\n`;
-  coffee += `    author:"${config.value.author}"\n`;
-  coffee += `    lastModified:"${now}"\n`;
-  coffee += `    vote:"${config.value.vote}"\n`;
-  coffee += `    sunrise:"${config.value.sunrise}"\n`;
-  coffee += `    sunset:"${config.value.sunset}"\n`;
-  coffee += `    icon:"${config.value.icon}"\n`;
-  coffee += `    background_color:"${config.value.background_color}"\n`;
-  coffee += `    color:"${config.value.color}"\n`;
-  coffee += `    lockable:${config.value.lockable}\n`;
-  coffee += `    isAvailable:->
-        return true
-    skins:\n`;
-
-  characters.value.forEach(char => {
-    const avatars = getAvatars(char);
-    const prizes = getPrizes(char);
-    coffee += `        ${char.id}:\n`;
-
-    if (avatars.length === 1) {
-      coffee += `            avatar:"${avatars[0]}"\n`;
-    } else if (avatars.length > 1) {
-      coffee += `            avatar:[${avatars.map(a => `"${a}"`).join(',')}]\n`;
-    } else {
-      coffee += `            avatar:""\n`;
-    }
-
-    coffee += `            name:"${char.name}"\n`;
-    if (prizes.length === 1) {
-      coffee += `            prize:"${prizes[0]}"\n`;
-    } else if (prizes.length > 1) {
-      coffee += `            prize:[${prizes.map(p => `"${p}"`).join(',')}]\n`;
-    } else {
-      coffee += `            prize:""\n`;
-    }
-  });
-
-  return coffee;
-});
-
+function buildThemeData() {
+  const defaults = createDefaultConfig();
+  const data = Object.fromEntries(Object.entries(config.value).filter(([key, value]) =>
+    !originalKeys.value || originalKeys.value.includes(key) || value !== defaults[key]));
+  if (!data.openAvatar || characters.value.length || originalKeys.value?.includes('skins')) {
+    data.skins = Object.fromEntries(characters.value.map(char => {
+      const original = char._extra || {};
+      const avatars = getAvatars(char);
+      const prizes = getPrizes(char);
+      const value = (items, previous) => Array.isArray(previous) || items.length > 1 ? items : items[0] || '';
+      const skin = { ...original, name: char.name };
+      const text = previous => Array.isArray(previous) ? previous.join('\n') : previous || '';
+      if (avatars.length || original.avatar !== undefined) skin.avatar = char.avatarInput === text(original.avatar)
+        ? original.avatar : value(avatars, original.avatar);
+      if (prizes.length || original.prize !== undefined) skin.prize = char.prizeInput === text(original.prize)
+        ? original.prize : value(prizes, original.prize);
+      return [char.id, skin];
+    }));
+  }
+  return data;
+}
+const generatedCoffee = computed(() => serializeTheme(buildThemeData(), availability.value));
 // 下载 Coffee 文件
 const downloadCoffee = () => {
   const blob = new Blob([generatedCoffee.value], { type: 'text/plain' });
@@ -761,6 +813,14 @@ const downloadCoffee = () => {
 </script>
 
 <style scoped>
+.editor-fields { margin: 0; padding: 0; border: 0; min-width: 0; }
+.server-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.server-controls select { flex: 1; min-width: 180px; padding: 10px; border: 1px solid #ccc; border-radius: 6px; background: white; }
+.server-save-fields { margin: 16px 0; }
+.server-hint, .server-status { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.server-hint { color: #666; }
+.server-status { margin-bottom: 0; }
+button:disabled { opacity: .55; cursor: not-allowed; }
 .theme-maker {
   padding: 20px;
   background: #f5f5f5;
